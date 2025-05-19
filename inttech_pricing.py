@@ -21,12 +21,15 @@ toa_estimates_ms = {
     12: 1600
 }
 
+avg_voltage_V = 3.3 # maybe get more accurate values for these through LISA (Sam's dad?), as these are just approximations based on Dragino at 14 dBm
+avg_current_A = 0.038 # maybe get more accurate values for these through LISA (Sam's dad?), as these are just approximations based on Dragino at 14 dBm
+
 sensor_locations = {}
 with open("sensor_locations.csv", newline="") as csvfile:
     reader = csv.DictReader(csvfile)
     for row in reader:
         eui = row["Sensor_Eui"].replace(":", "").lower()
-        if len(eui) == 16:  # only full EUI-64
+        if len(eui) == 16:
             lat = row["St_Y"].strip()
             lon = row["St_X"].strip()
             room = row["Roomname"]
@@ -41,7 +44,7 @@ writer = csv.writer(output_file)
 writer.writerow([
     "device_id", "device_name", "sf", "bw", "toa_ms",
     "gateway_name", "gw_lat", "gw_lon", "timestamp",
-    "sensor_lat", "sensor_lon", "room"
+    "sensor_lat", "sensor_lon", "room", "energy_mwh"
 ])
 
 def receive_data():
@@ -70,6 +73,7 @@ def handle_message(msg):
     
     gw_info = gateway_info.get(gateway, ("unknown", None, None, None))
     energy_ms = toa_estimates_ms.get(sf, None)
+    energy_mwh = estimate_energy_mWh(energy_ms)
 
     sensor_info = sensor_locations.get(device_id) if len(device_id) == 16 else "unknown"
     if sensor_info:
@@ -82,13 +86,15 @@ def handle_message(msg):
     print(f"Bandwidth: {bw} kHz")
     print(f"Gateway: {gw_info[0]} at lat={gw_info[1]}, lon={gw_info[2]}")
     print(f"Estimated TOA: {energy_ms} ms\n")
+    print(f"Estimated energy spent for this transmission: {energy_mwh} mWh\n")
 
     writer.writerow([
         device_id, device_name, sf, bw, energy_ms,
         gw_info[0], gw_info[1], gw_info[2], msg['time'],
         sensor_info['lat'] if sensor_info else "unknown",
         sensor_info['lon'] if sensor_info else "unknown",
-        sensor_info['room'] if sensor_info else "unknown"
+        sensor_info['room'] if sensor_info else "unknown", 
+        energy_mwh
     ])
 
 def get_spreadingfactor(datr):
@@ -102,5 +108,10 @@ def get_bandwidth(datr):
         return int(datr.split("BW")[1])
     else:
         return None
+    
+def estimate_energy_mWh(toa_ms):
+    if toa_ms is None:
+        return None
+    return round((avg_voltage_V * avg_current_A * toa_ms) / 3600000, 6)
 
 receive_data()
