@@ -21,8 +21,6 @@ toa_estimates_ms = {
     12: 1600
 }
 
-bandwidth = 0 ## symbol duration? 2^SF/BW -> Misschien kunnen we daar iets mee.
-
 sensor_locations = {}
 with open("sensor_locations.csv", newline="") as csvfile:
     reader = csv.DictReader(csvfile)
@@ -41,7 +39,7 @@ with open("sensor_locations.csv", newline="") as csvfile:
 output_file = open("device_log.csv", "w", newline="")
 writer = csv.writer(output_file)
 writer.writerow([
-    "device_id", "device_name", "sf", "toa_ms",
+    "device_id", "device_name", "sf", "bw", "toa_ms",
     "gateway_name", "gw_lat", "gw_lon", "timestamp",
     "sensor_lat", "sensor_lon", "room"
 ])
@@ -56,18 +54,16 @@ def receive_data():
                 msg = json.loads(msg)
                 handle_message(msg)
                 count += 1
-            except json.JSONDecodeError:
-                print("Failed to decode JSON, skipping packet.")
-            except Exception as e:
-                print("Error while handling message:", e)
-                break
+            except:
+                msg = None
         print(f"Received {count} messages!")
         output_file.close()
 
 def handle_message(msg):
-    print(f"Received packet with rssi: {msg['rssi']}")
+    print(f"Received packet with rssi: {msg.get('rssi', 'N/A')}")
 
     sf = get_spreadingfactor(msg.get("datr", ""))
+    bw = get_bandwidth(msg.get("datr", ""))
     gateway = msg.get("gateway", "").replace(":", "").lower()
     device_id = msg.get("device_eui", msg.get("device_addr", "unknown")).lower()
     device_name = msg.get("device_name", "unknown")
@@ -83,11 +79,12 @@ def handle_message(msg):
 
     print(f"Device: {device_name} ({device_id})")
     print(f"Spreading Factor: {sf}")
+    print(f"Bandwidth: {bw} kHz")
     print(f"Gateway: {gw_info[0]} at lat={gw_info[1]}, lon={gw_info[2]}")
     print(f"Estimated TOA: {energy_ms} ms\n")
 
     writer.writerow([
-        device_id, device_name, sf, energy_ms,
+        device_id, device_name, sf, bw, energy_ms,
         gw_info[0], gw_info[1], gw_info[2], msg['time'],
         sensor_info['lat'] if sensor_info else "unknown",
         sensor_info['lon'] if sensor_info else "unknown",
@@ -97,6 +94,12 @@ def handle_message(msg):
 def get_spreadingfactor(datr):
     if datr.startswith("SF"):
         return int(datr[2:].split("BW")[0])
+    else:
+        return None
+    
+def get_bandwidth(datr):
+    if "BW" in datr:
+        return int(datr.split("BW")[1])
     else:
         return None
 
