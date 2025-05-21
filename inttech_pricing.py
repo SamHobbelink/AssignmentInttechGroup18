@@ -1,28 +1,10 @@
 from websockets.sync.client import connect
 import json
 import csv
+from fractions import Fraction
 
-gateway_info = {
-    'a840411ee4c44150': ("dragino-alpha", 52.216327, 6.900825, 105),
-    'a840411eadfc4150': ("dragino-meander", 52.236887101823, 6.859867572784425, 4),
-    'a840411ee8904150': ("dragino-ub", 52.243762, 6.853425, 3),
-    '0000024b080301bf': ("kerlink-awm", 52.23989, 6.85014, 54),
-    '1dee039aac75c307': ("utwente-enschede-macrocell", 52.2165, 6.9007, 105),
-    'a840411eae004150': ("utwente-lg308-02", 52.23923592912191, 6.855506300926209, 4),
-    'a840411da56c4150': ("utwente-rav-rooftop", 52.23913, 6.85565, 6),
-}
-
-toa_estimates_ms = {
-    7: 50,
-    8: 100,
-    9: 200,
-    10: 400,
-    11: 800,
-    12: 1600
-}
-
-avg_voltage_V = 3.3 # maybe get more accurate values for these through LISA (Sam's dad?), as these are just approximations based on Dragino at 14 dBm
-avg_current_A = 0.038 # maybe get more accurate values for these through LISA (Sam's dad?), as these are just approximations based on Dragino at 14 dBm
+avg_voltage_V = 3.3
+avg_current_A = 0.038
 
 sensor_locations = {}
 with open("sensor_locations.csv", newline="") as csvfile:
@@ -42,9 +24,9 @@ with open("sensor_locations.csv", newline="") as csvfile:
 output_file = open("device_log.csv", "w", newline="")
 writer = csv.writer(output_file)
 writer.writerow([
-    "device_id", "device_name", "sf", "bw", "toa_ms",
-    "gateway_name", "gw_lat", "gw_lon", "timestamp",
-    "sensor_lat", "sensor_lon", "room", "energy_mwh"
+    "device_id", "device_name", "spreading_factor", "bandwidth_kHz", "coding_rate",
+    "size_bytes", "bitrate_bps", "toa_ms", "energy_kWh", "energy_euros", "timestamp",
+    "sensor_lat", "sensor_lon", "sensor_room"
 ])
 
 def receive_data():
@@ -67,13 +49,16 @@ def handle_message(msg):
 
     sf = get_spreadingfactor(msg.get("datr", ""))
     bw = get_bandwidth(msg.get("datr", ""))
-    gateway = msg.get("gateway", "").replace(":", "").lower()
     device_id = msg.get("device_eui", msg.get("device_addr", "unknown")).lower()
+    coding_rate = msg.get("codr", "")
+    msg_size = msg.get("size", "")
     device_name = msg.get("device_name", "unknown")
-    
-    gw_info = gateway_info.get(gateway, ("unknown", None, None, None))
-    energy_ms = toa_estimates_ms.get(sf, None)
-    energy_mwh = estimate_energy_mWh(energy_ms)
+    coding_rate_val = float(Fraction(coding_rate))
+    bitrate = ((sf) * (bw*1000)/2**sf) * coding_rate_val
+
+    toa_ms = ((msg_size * 8)/float(bitrate)) * 1000
+    energy_kWh = estimate_energy_kWh(toa_ms)
+    energy_eur = energy_kWh * 0.24 # current price of a kWh in NL is 24 cents
 
     sensor_info = sensor_locations.get(device_id) if len(device_id) == 16 else "unknown"
     if sensor_info:
@@ -84,17 +69,19 @@ def handle_message(msg):
     print(f"Device: {device_name} ({device_id})")
     print(f"Spreading Factor: {sf}")
     print(f"Bandwidth: {bw} kHz")
-    print(f"Gateway: {gw_info[0]} at lat={gw_info[1]}, lon={gw_info[2]}")
-    print(f"Estimated TOA: {energy_ms} ms\n")
-    print(f"Estimated energy spent for this transmission: {energy_mwh} mWh\n")
+    print(f"Coding rate: {coding_rate}")
+    print(f"Message size: {msg_size} bytes")
+    print(f"Bitrate: {bitrate} bps")
+    print(f"Time-on-air: {toa_ms} ms")
+    print(f"Energy consumed: {energy_kWh} kWh")
+    print(f"Estimated transmission energy cost: {energy_eur} euros\n")
 
     writer.writerow([
-        device_id, device_name, sf, bw, energy_ms,
-        gw_info[0], gw_info[1], gw_info[2], msg['time'],
+        device_id, device_name, sf, bw, coding_rate,
+        msg_size, bitrate, toa_ms, energy_kWh, energy_eur, msg['time'],
         sensor_info['lat'] if sensor_info else "unknown",
         sensor_info['lon'] if sensor_info else "unknown",
-        sensor_info['room'] if sensor_info else "unknown", 
-        energy_mwh
+        sensor_info['room'] if sensor_info else "unknown"
     ])
 
 def get_spreadingfactor(datr):
@@ -109,9 +96,9 @@ def get_bandwidth(datr):
     else:
         return None
     
-def estimate_energy_mWh(toa_ms):
+def estimate_energy_kWh(toa_ms):
     if toa_ms is None:
         return None
-    return round((avg_voltage_V * avg_current_A * toa_ms) / 3600000, 6)
+    return (avg_voltage_V * avg_current_A * toa_ms) / 3600000000
 
 receive_data()
